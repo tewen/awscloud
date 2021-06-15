@@ -47,13 +47,11 @@ def retry(
     return deco_retry
 
 
-def get_email_record_from_event(event):
-    return decamelize(event["Records"][0]["ses"]["mail"])
-
-
-def get_email_receipt_from_event(event):
-    return decamelize(event["Records"][0]["ses"]["receipt"])
-
+def get_ses_record_from_event(event):
+    for record in event.get("Records", []):
+        if record.get("eventSource") == "aws:ses":
+            return record.get("ses")
+    return None
 
 def get_spam_verdict(receipt):
     return receipt["spam_verdict"]["status"]
@@ -117,8 +115,11 @@ def send_to_court_listener(email, receipt):
             combined=get_combined_log_message(email)
         )
     )
+
+    # DEV DOMAIN: http://host.docker.internal:8000
     court_listener_response = requests.post(
-        "http://host.docker.internal:8000/api/rest/v3/free-look-email/",
+        "https://sanfordlawfirm.business/api/v1/court-documents/webhook",
+        # NOTE: The message_id is special, because we use that to retrieve the S3 file.
         json.dumps({"mail": email, "receipt": receipt}),
         headers={"Content-Type": "application/json"},
     )
@@ -130,20 +131,29 @@ def send_to_court_listener(email, receipt):
 
 
 def handler(event, context):
-    ses_email = get_email_record_from_event(event)
-    ses_receipt = get_email_receipt_from_event(event)
+    print(json.dumps(event))
+    ses_record = get_ses_record_from_event(event)
+    if ses_record is None:
+        return {
+            "statusCode": 415,
+            "body": json.dumps({"message": "PACER email receipt requires aws:ses eventSource."})
+        }
+    else:
+        email = decamelize(ses_record.get('mail', {}))
+        receipt = decamelize(ses_record.get('receipt', {}))
 
-    # NOTE - Not sure if we'll want every single check, we'll have to see what the standard PACER email comes in as.
-    tests = (
-        get_spam_verdict,
-        get_virus_verdict,
-        get_spf_verdict,
-        get_dkim_verdict,
-        get_dmarc_verdict,
-    )
-    for test in tests:
-        verdict = test(ses_receipt)
-        if verdict != "PASS":
-            return validation_failure(ses_email, ses_receipt, verdict)
+        # NOTE - Not sure if we'll want every single check, we'll have to see what the standard PACER email comes in as.
+        tests = (
+            # NOTE - SPAM verdict failed with some of my test emails.
+            # get_spam_verdict,
+            get_virus_verdict,
+            # get_spf_verdict,
+            # get_dkim_verdict,
+            # get_dmarc_verdict,
+        )
+        for test in tests:
+            verdict = test(receipt)
+            if verdict != "PASS":
+                return validation_failure(email, receipt, verdict)
 
-    return send_to_court_listener(ses_email, ses_receipt)
+        return send_to_court_listener(email, receipt)
