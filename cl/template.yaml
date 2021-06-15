@@ -35,5 +35,5 @@ Outputs:
     Description: "Free Look Email Lambda Function ARN"
     Value: !GetAtt FreeLookEmailFunction.Arn
   FreeLookEmailFunctionIamRole:
-    Description: "Implicit IAM Role created for the Free Look Email nunction"
+    Description: "Implicit IAM Role created for the Free Look Email function"
     Value: !GetAtt FreeLookEmailFunctionRole.Arn
